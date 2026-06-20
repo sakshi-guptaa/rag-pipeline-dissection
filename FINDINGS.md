@@ -361,9 +361,75 @@ Every model, regardless of architecture or training objective, achieves exactly 
 
 ## Key Takeaways
 
-_To be filled after all phases are complete._
+### Total Improvement: Baseline → Final Pipeline
 
-- Which phase produced the biggest single gain?
-- Which changes had surprisingly little impact?
-- What is the total improvement from Phase 0 → Phase 6?
-- What would you prioritise in a production system?
+| Metric | Phase 0 (Baseline) | Phase 6 (Final) | Total Gain |
+|--------|-------------------|-----------------|------------|
+| Recall@1 | 35% | **80%** | **+45pp** |
+| Recall@3 | 55% | **85%** | **+30pp** |
+| Recall@5 | 55% | **90%** | **+35pp** |
+| MRR | 0.4417 | **0.8292** | **+0.39** |
+| Parse time | 4,589ms | **383ms** | **12× faster** |
+
+---
+
+### 1. Which phase produced the biggest single gain?
+
+**Phase 1 (Parser) and Phase 6 (HyDE) tie — but in different dimensions.**
+
+- **Phase 1 (Parser)** produced the biggest *coverage* gain: R@5 jumped from 55% → 75% (+20pp) just by fixing how PDFs are read. Joining pages across boundaries and stripping citation noise fixed structural problems that no amount of better chunking or embedding could overcome. Free gain, zero cost.
+
+- **Phase 6 (HyDE)** produced the biggest *ranking* gain: R@1 jumped from 60% → 80% (+20pp) and MRR improved by +0.115 — the largest single-phase MRR increase of the audit. Writing a fake academic-style answer and embedding that instead of the raw question addresses the fundamental mismatch between interrogative queries and declarative document prose.
+
+---
+
+### 2. Which changes had surprisingly little impact?
+
+- **Embedding model (Phase 3):** Swapping from all-mpnet to BGE improved MRR (+0.04) and Top-1 score (+0.19), but R@5 didn't move at all — stuck at 85% regardless of model. All 4 models missed the exact same 3 questions. The retrieval ceiling was not the embedding model; it was the query–document language gap and keyword-exact questions.
+
+- **Cross-encoder reranker (Phase 4):** Not only did it not help — it actively hurt. R@5 dropped 5pp and latency increased 4,000×. Domain mismatch (web search vs. academic prose) made the reranker's relevance judgements unreliable. A lesson: off-the-shelf rerankers are not plug-and-play; they need to be trained on in-domain data.
+
+- **RAG Fusion (Phase 6):** Generating 4 query paraphrases and merging results hurt more than it helped. On a corpus where questions are already precise and specific, variant queries retrieved overlapping but noisier result sets, diluting the best-performing variant rather than amplifying it.
+
+---
+
+### 3. What were the structural insights — the things no metric told you upfront?
+
+- **R@5=85% was a false ceiling.** Four different embedding models, two reranker configurations — all stuck at exactly 85%. It looked like a hard limit until Phase 5 (hybrid) revealed it was three specific questions with exact-term answers that dense retrieval systematically missed. The ceiling was in the *retrieval modality*, not the model quality.
+
+- **Character chunker "wins" on metrics but is broken.** R@5=90% with chunk_size=1000 — but it produced only 16 chunks averaging 12,866 chars, with 68.8% oversized. The embedding model silently truncated 70%+ of every chunk's content. Metrics looked great because the 16 chunks were so large they accidentally contained most answers. In production this would cause silent quality degradation as the corpus scales.
+
+- **BM25-only MRR beat dense-only.** BM25 (pure keyword, no ML) scored MRR=0.7167 vs dense's 0.6933. Academic papers use precise, consistent terminology — when the question phrase matches the paper phrase exactly, BM25 finds it instantly. This is a signal that domain-specific retrieval problems often have simpler solutions than expected.
+
+- **HyDE has run-to-run variance.** Because GPT generates different hypothetical answers each run (temperature=0.3), MRR varies ~0.81–0.83 across runs. This means HyDE-powered pipelines need to account for non-determinism in evaluation — a single benchmark number is not sufficient.
+
+---
+
+### 4. What would you prioritise in a production system?
+
+**In order of ROI:**
+
+1. **Fix the parser first** — always. Cross-page splitting, citation noise, and figure caption bleed-in are systematic problems that corrupt every downstream step. 12× faster parsing is a bonus. Cost: zero, one-time fix.
+
+2. **Use a retrieval-optimised embedding model with task prefixes** (BGE or similar). The gap from a generic sentence encoder to a retrieval-tuned model is real and cheap — just a model swap.
+
+3. **Add BM25 hybrid search** — especially for technical or domain-specific corpora where users use exact terminology. Weighted RRF (α=0.7) adds negligible latency and meaningfully improves recall coverage. The α parameter needs tuning per corpus.
+
+4. **Add HyDE if latency budget allows** — one LLM call per query (~120ms, ~$0.00005) gives the biggest ranking improvement possible. Skip RAG Fusion; it adds noise and cost without benefit on precise queries.
+
+5. **Skip cross-encoder reranking** unless you have an in-domain reranker. Off-the-shelf MS MARCO rerankers hurt on academic text. If you do use a reranker, fine-tune it on your domain or use a general-purpose reranker trained on diverse corpora.
+
+---
+
+### Final Pipeline
+
+```
+PDF → pymupdf (join pages, strip noise)
+    → section_wise chunker (size=1000, overlap=100)
+    → BGE-base-en-v1.5 embeddings (with query prefix)
+    → FAISS + BM25 hybrid retrieval (weighted RRF α=0.7)
+    → HyDE query expansion (gpt-4o-mini, 1 call/query)
+    → top-5 results
+```
+
+**R@5=90% · MRR=0.8292 · R@1=80% · query latency ~122ms**
