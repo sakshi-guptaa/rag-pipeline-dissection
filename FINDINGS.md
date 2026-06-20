@@ -11,6 +11,7 @@ Baseline: Recursive chunker | chunk_size=800 | overlap=80 | FAISS
 | 0-Baseline | Default settings, no optimisation | recursive | 800 | 80 | faiss | 35.00% | 55.00% | 55.00% | 0.4417 | 0.5706 | 509 | 477 | 0.0% | 31.5% | 23980ms | 0.33ms |
 | 1-Parser | pymupdf + join pages + strip captions & citations | recursive | 800 | 80 | faiss | 40.00% | 70.00% | 75.00% | 0.5350 | 0.5586 | 493 | 484 | 0.0% | 31.2% | 23414ms | 0.29ms |
 | 2-Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | character | 1000 | 100 | faiss | 65% | 80% | **90%** | **0.7475** | — | 16 | 12,866 | 68.8% | 83.7% | 1,392ms | 0.04ms |
+| 3-Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models tie at R@5=85%) | section_wise | 1000 | 100 | faiss | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 | 1.4% | 49.7% | 13,686ms | 0.08ms |
 
 ## Phase 2 — Chunking Sweep Results
 
@@ -35,3 +36,51 @@ Swept 3 chunkers × 4 sizes (400, 800, 1000, 1200). Semantic excluded (too slow,
 
 **Metric winner:** character size=1000 → R@5=90%, MRR=0.7475
 **Production pick:** section_wise size=1000 → R@5=85%, MRR=0.6492 (proper chunking, 2.3% oversized)
+
+
+## Phase 3 — Embedding Model Sweep
+
+**Branch:** `phase/3-embedding` | **Tag:** `phase-3-embedding`
+
+**What changed:** `shared/embedder.py` approach only — same chunks (section_wise size=1000), same FAISS store. Tested 4 local models. BGE and Nomic use task-specific query prefixes.
+
+### Full Sweep Results
+
+| Model | Token Limit | Dim | R@1 | R@3 | R@5 | MRR | Top-1 Score | Oversized | Token Util | Embed Time | Query Latency |
+|-------|-------------|-----|-----|-----|-----|-----|-------------|-----------|------------|------------|---------------|
+| all-mpnet-base-v2 *(baseline)* | 384 | 768 | 55% | 70% | 85% | 0.6492 | 0.5122 | 2.3% | 65.6% | 15,083ms | 0.16ms |
+| multi-qa-mpnet-base-dot-v1 | 512 | 768 | 45% | 70% | 85% | 0.5825 | 0.6084 | 1.4% | 49.7% | 18,753ms | 0.16ms |
+| **bge-base-en-v1.5** | **512** | **768** | **60%** | **80%** | **85%** | **0.6933** | **0.7036** | **1.4%** | **49.7%** | **13,686ms** | **0.08ms** |
+| nomic-embed-text-v1 | 8192 | 768 | 50% | 80% | 85% | 0.6542 | 0.6468 | **0%** | 3.1% | 29,042ms | 5.05ms |
+
+### Delta from Phase 2 (section_wise baseline)
+
+| Metric | Phase 2 (baseline model) | Phase 3 (BGE) | Delta |
+|--------|--------------------------|---------------|-------|
+| Recall@1 | 55% | **60%** | +5% |
+| Recall@3 | 70% | **80%** | +10% |
+| Recall@5 | 85% | 85% | 0% |
+| MRR | 0.6492 | **0.6933** | +0.04 |
+| Avg Top-1 Score | 0.5122 | **0.7036** | +0.19 |
+
+### The Critical Finding — R@5 is Capped at 85%
+
+Every model, regardless of architecture or training objective, achieves exactly **R@5=85%**. The same 3 questions are missed by all 4 models. This means:
+
+- The bottleneck is **not the embedding model** — it's something upstream
+- The 3 missing answers are either not present in the chunks, or the query–document language gap is too wide for any bi-encoder to bridge
+- Further embedding model changes will not move Recall@5 — we need Phase 5 (HyDE/RAG Fusion) to address the language gap, or Phase 6 (Hybrid Search) to catch keyword-matchable answers
+
+### Per-Model Findings
+
+- **BGE wins on MRR (+0.04) and Top-1 Score (+0.19)** — the query prefix ("Represent this sentence for searching relevant passages:") correctly steers the model toward retrieval-mode embeddings. The right answer ranks higher even when found.
+- **multi-qa underperforms baseline on MRR (0.5825 vs 0.6492)** — surprising. Q&A training improves cosine similarity (Top-1: 0.61 vs 0.51) but doesn't translate to better ranking. The model may be over-fitting to direct QA datasets that look different from academic paper prose.
+- **Nomic eliminates oversizing entirely (0%)** — confirmed: zero truncation with 8192-token limit. But no recall improvement, confirming truncation was not causing the 3 missed questions.
+- **Nomic query latency is 30× slower (5.05ms vs 0.16ms)** — the FAISS index is over 768-dim vectors for all models (Nomic compresses to 768 internally), but Nomic's prefixes add overhead per query.
+- **Token utilization for Nomic is only 3.1%** — our chunks (avg 1,039 chars ≈ 260 tokens) use just 3% of the 8192-token window. The long context is entirely wasted on this corpus.
+
+### Conclusion
+
+**Winner: BGE-base-en-v1.5** — best MRR (0.6933), best Top-1 cosine similarity (0.7036), fastest embed time (13,686ms), and lowest query latency (0.08ms).
+
+**Key insight: embedding model choice affects ranking quality (MRR, Top-1 score) but not retrieval coverage (Recall@5) on this corpus.** The 3 missing questions require a different approach entirely. All subsequent phases will use **BGE-base-en-v1.5**.
