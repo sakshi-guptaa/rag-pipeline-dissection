@@ -63,7 +63,7 @@ Each phase changes exactly one layer of the pipeline and measures the impact on 
 | 3 — Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models plateau at R@5=85%) | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 chars | 1.4% | 49.7% | 13,686ms | 0.08ms |
 | 4 — Retrieval | cross-encoder reranker hurts on academic corpus: R@5 -5%, MRR flat, latency 4000× | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 chars | 1.4% | 49.7% | 13,149ms | 329.95ms |
 | 5 — Hybrid Search | BM25+dense weighted RRF (α=0.7) first method to break R@5=85% ceiling | **60%** | 80% | **90%** | **0.7142** | — | 214 | 1,039 chars | 1.4% | 49.7% | 12,645ms | ~0.6ms |
-| 6 — Query | _TBD_ (HyDE + RAG Fusion, needs OpenAI key) | | | | | | | | | | | |
+| 6 — Query | HyDE biggest MRR gain of audit (+0.115); RAG Fusion hurts | **80%** | **85%** | **90%** | **0.8292** | — | 214 | 1,039 chars | 1.4% | 49.7% | 12,645ms | ~122ms |
 
 ---
 
@@ -331,11 +331,31 @@ Every model, regardless of architecture or training objective, achieves exactly 
 
 **Branch:** `phase/6-query` | **Tag:** `phase-6-query`
 
-**What changes:** Query preprocessing before embedding.
-- **HyDE** — LLM generates a fake answer, that answer is embedded instead of the raw question. Closes the question↔document language gap.
-- **RAG Fusion** — generate 3–5 query variants, retrieve for each, merge with RRF.
+**What changed:** Query layer only — same index (section_wise size=1000, BGE, FAISS+BM25 hybrid α=0.7). GPT-4o-mini used at query time to improve the query representation before retrieval. Tested 4 strategies.
 
-_Requires `OPENAI_API_KEY`. Results to be recorded after implementation._
+### Results
+
+| Metric | Hybrid (Ph5) | **HyDE** | RAG Fusion | HyDE+Fusion |
+|--------|-------------|----------|------------|-------------|
+| Recall@1 | 60% | **80%** | 50% | 75% |
+| Recall@3 | 80% | **85%** | 80% | 75% |
+| Recall@5 | 90% | **90%** | 85% | 85% |
+| MRR | 0.7142 | **0.8292** | 0.6517 | 0.7750 |
+| Latency | 34ms | 122ms | 86ms | 9,211ms |
+
+### Findings
+
+- **HyDE: R@1 60%→80%, MRR 0.7142→0.8292** — the single biggest gain of the entire audit. Writing a fake academic-style answer and embedding that instead of the raw question closes the query–document register gap entirely.
+- **RAG Fusion hurts** — R@1 drops to 50%, R@5 drops to 85%. 4 paraphrases retrieve overlapping-but-different result sets; RRF averaging dilutes the best-performing variant's signal rather than amplifying it.
+- **HyDE+Fusion: 9.2 seconds, worse than plain HyDE** — 80 GPT calls per query, and fusion noise cancels out HyDE's gains. Not viable.
+- **Results have run-to-run variance (~5%)** — GPT generates different hypothetical answers each run (temperature=0.3). MRR range observed: 0.81–0.83. Trend is consistent across runs.
+
+### Conclusion
+
+**Best query strategy: HyDE alone.** One GPT call per query, 122ms latency, +20% R@1, +0.115 MRR.
+
+**Final best pipeline:** section_wise (size=1000) → BGE-base-en-v1.5 → FAISS+BM25 hybrid (α=0.7) → HyDE query expansion  
+→ **R@5=90%, MRR=0.8292, R@1=80%** (vs baseline: R@5=55%, MRR=0.4417, R@1=35%)
 
 ---
 
