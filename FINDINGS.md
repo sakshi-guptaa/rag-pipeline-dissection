@@ -14,6 +14,7 @@ Baseline: Recursive chunker | chunk_size=800 | overlap=80 | FAISS
 | 3-Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models tie at R@5=85%) | section_wise | 1000 | 100 | faiss | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 | 1.4% | 49.7% | 13,686ms | 0.08ms |
 | 4-Retrieval | cross-encoder reranker hurts: R@5 55%→80%, MRR flat, latency 4000× worse | section_wise | 1000 | 100 | faiss | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 | 1.4% | 49.7% | 13,149ms | 329.95ms |
 | 5-Hybrid | BM25 + dense + weighted RRF (α=0.7) breaks R@5 ceiling | section_wise | 1000 | 100 | faiss+bm25 | **60%** | 80% | **90%** | **0.7142** | — | 214 | 1,039 | 1.4% | 49.7% | 12,645ms | ~0.6ms |
+| 6-Query | HyDE (GPT fake answer) — biggest MRR gain of entire audit | section_wise | 1000 | 100 | faiss+bm25 | **80%** | **85%** | **90%** | **0.8292** | — | 214 | 1,039 | 1.4% | 49.7% | 12,645ms | ~122ms |
 
 ## Phase 2 — Chunking Sweep Results
 
@@ -179,3 +180,59 @@ BM25-only MRR=0.7167 beats dense-only MRR=0.6933. Academic papers use precise, c
 **Winner: Hybrid RRF with α=0.7** — R@5=90%, MRR=0.7142, latency ~0.6ms.
 
 **Key insight: BM25 and dense retrieval have complementary failure modes.** Dense fails on exact-term questions (language gap). BM25 fails on paraphrase questions (no term overlap). RRF captures both signals. The weight α=0.7 keeps dense in control of ranking while letting BM25 contribute recall coverage.
+
+
+## Phase 6 — Query Improvement (HyDE + RAG Fusion)
+
+**Branch:** `phase/6-query` | **Tag:** `phase-6-query`
+
+**What changed:** Query layer only — same index (section_wise size=1000, BGE, FAISS+BM25 hybrid α=0.7). GPT-4o-mini used at query time only, not during indexing.
+
+### Results
+
+| Metric | Hybrid (Ph5) | HyDE | RAG Fusion | HyDE+Fusion |
+|--------|-------------|------|------------|-------------|
+| Recall@1 | 60% | **80%** | 50% | 75% |
+| Recall@3 | 80% | **85%** | 80% | 75% |
+| Recall@5 | **90%** | **90%** | 85% | 85% |
+| MRR | 0.7142 | **0.8292** | 0.6517 | 0.7750 |
+| Latency | 34ms | 122ms | 86ms | 9,211ms |
+
+### Delta from Phase 5 (best config: HyDE)
+
+| Metric | Phase 5 (hybrid) | Phase 6 (HyDE) | Delta |
+|--------|-----------------|----------------|-------|
+| Recall@1 | 60% | **80%** | **+20%** |
+| Recall@3 | 80% | **85%** | **+5%** |
+| Recall@5 | 90% | 90% | 0% |
+| MRR | 0.7142 | **0.8292** | **+0.115** |
+
+### Per-Strategy Findings
+
+**HyDE — the clear winner:**
+- R@1 jumps 60% → 80% — the biggest single-metric gain in the entire audit
+- MRR improves by +0.115 (from 0.7142 → 0.8292) — the correct answer now ranks at position 1 for 16/20 questions
+- Why it works: GPT writes a fake answer in the same academic prose register as the papers. The embedding of that fake answer sits much closer in vector space to the real answer chunk than an interrogative question ever could
+- R@5 unchanged at 90% — HyDE doesn't find new answers, it makes found answers rank higher
+- Cost: one GPT call per query (~$0.00005), latency ~122ms
+
+**RAG Fusion — hurts on this corpus:**
+- R@1 drops 60% → 50%, R@5 drops 90% → 85%
+- 4 query paraphrases retrieve 4 slightly different result sets; RRF averages them, which dilutes the signal from the best-performing variant
+- Works better on longer or more ambiguous queries where different angles genuinely catch different relevant documents — not helpful here where questions are already precise
+
+**HyDE + Fusion — worst of all worlds:**
+- Slower than everything else (9.2 seconds — 80 GPT calls per query)
+- Worse than plain HyDE on every metric
+- Fusion noise cancels out HyDE's ranking gains
+
+### Conclusion
+
+**Best query strategy: HyDE alone.** Generating a hypothetical academic-style answer and embedding that instead of the raw question is the highest-leverage query improvement possible on this corpus.
+
+**Best overall pipeline:** section_wise chunking (size=1000) → BGE-base-en-v1.5 embedding → FAISS+BM25 hybrid retrieval (α=0.7) → HyDE query expansion  
+→ **R@5=90%, MRR=0.8292, R@1=80%**
+
+**Key insight: the query–document language gap is real and HyDE closes it.** Questions are interrogative; papers are declarative. No amount of better chunking, embedding, or retrieval can bridge a stylistic gap that exists in the input representation itself.
+
+
