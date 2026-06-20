@@ -1,0 +1,10 @@
+sentence-transformers
+pypdf
+pymupdf
+faiss-cpu
+qdrant-client
+chromadb
+numpy
+openai
+gradio
+python-dotenv

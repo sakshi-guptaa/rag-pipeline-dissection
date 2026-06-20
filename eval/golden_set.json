@@ -1,0 +1,102 @@
+[
+  {
+    "question": "What is the key mechanism that replaces recurrence in the Transformer?",
+    "evidence": "self-attention",
+    "paper": "attention"
+  },
+  {
+    "question": "How many attention heads does the base Transformer model use?",
+    "evidence": "8",
+    "paper": "attention"
+  },
+  {
+    "question": "What positional encoding scheme does the Transformer use?",
+    "evidence": "sinusoidal",
+    "paper": "attention"
+  },
+  {
+    "question": "What optimizer is used for training the Transformer?",
+    "evidence": "Adam",
+    "paper": "attention"
+  },
+  {
+    "question": "What is scaled dot-product attention?",
+    "evidence": "softmax",
+    "paper": "attention"
+  },
+  {
+    "question": "What BLEU score does the big Transformer achieve on WMT 2014 English-to-German?",
+    "evidence": "28.4",
+    "paper": "attention"
+  },
+  {
+    "question": "What is the dimensionality of the base model?",
+    "evidence": "512",
+    "paper": "attention"
+  },
+  {
+    "question": "How does multi-head attention work?",
+    "evidence": "different representation subspaces",
+    "paper": "attention"
+  },
+  {
+    "question": "What regularization technique is applied during training?",
+    "evidence": "dropout",
+    "paper": "attention"
+  },
+  {
+    "question": "What dataset is used for English-to-French translation?",
+    "evidence": "WMT 2014",
+    "paper": "attention"
+  },
+  {
+    "question": "What does RAG combine for knowledge-intensive tasks?",
+    "evidence": "parametric and non-parametric",
+    "paper": "rag"
+  },
+  {
+    "question": "What retriever does the original RAG model use?",
+    "evidence": "DPR",
+    "paper": "rag"
+  },
+  {
+    "question": "What are the two RAG variants introduced in the paper?",
+    "evidence": "RAG-Sequence",
+    "paper": "rag"
+  },
+  {
+    "question": "What generator model does RAG use?",
+    "evidence": "BART",
+    "paper": "rag"
+  },
+  {
+    "question": "What task does RAG set state-of-the-art on for open-domain question answering?",
+    "evidence": "Natural Questions",
+    "paper": "rag"
+  },
+  {
+    "question": "What graph structure does HNSW build for approximate nearest neighbor search?",
+    "evidence": "navigable small world",
+    "paper": "hnsw"
+  },
+  {
+    "question": "What is the search complexity of HNSW?",
+    "evidence": "logarithmic",
+    "paper": "hnsw"
+  },
+  {
+    "question": "What does HNSW use to speed up search by starting from coarse layers?",
+    "evidence": "hierarchical",
+    "paper": "hnsw"
+  },
+  {
+    "question": "What metric does RAGAS use to measure if the answer is grounded in context?",
+    "evidence": "faithfulness",
+    "paper": "ragas"
+  },
+  {
+    "question": "What does RAGAS measure about whether retrieved context is relevant?",
+    "evidence": "context relevancy",
+    "paper": "ragas"
+  }
+]
