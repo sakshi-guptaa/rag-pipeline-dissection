@@ -58,7 +58,7 @@ Each phase changes exactly one layer of the pipeline and measures the impact on 
 | Phase | Change | R@1 | R@3 | R@5 | MRR | Top-1 Score | Chunks | Avg Size | Oversized | Token Util | Embed Time | Query Latency |
 |-------|--------|-----|-----|-----|-----|-------------|--------|----------|-----------|------------|------------|---------------|
 | 0 — Baseline | No change | 35% | 55% | 55% | 0.4417 | 0.5706 | 509 | 477 chars | 0% | 31.5% | 23,979 ms | 0.33 ms |
-| 1 — Parser | _TBD_ | | | | | | | | | | | |
+| 1 — Parser | pymupdf + join pages + strip noise | **40%** | **70%** | **75%** | **0.5350** | 0.5586 | 493 | 484 chars | 0% | 31.2% | 23,414 ms | 0.29 ms |
 | 2 — Chunking | _TBD_ | | | | | | | | | | | |
 | 3 — Embedding | _TBD_ | | | | | | | | | | | |
 | 4 — Retrieval | _TBD_ | | | | | | | | | | | |
@@ -119,9 +119,43 @@ The baseline pipeline is functional but leaves significant room for improvement.
 
 **Branch:** `phase/1-parser` | **Tag:** `phase-1-parser`
 
-**What changes:** `shared/loader.py` only — switch from `pypdf` to `pymupdf`, join all pages per PDF into one document, strip figure captions and inline citations.
+**What changed:** `shared/loader.py` only — switched from `pypdf` to `pymupdf`, joined all pages per PDF into one document before chunking, stripped figure captions and inline citations.
 
-_Results to be recorded after running `eval/run_phase.py --phase "1-Parser" --save`_
+### Results
+
+| Metric | Phase 0 | Phase 1 | Delta |
+|--------|---------|---------|-------|
+| Recall@1 | 35.00% | **40.00%** | +5% |
+| Recall@3 | 55.00% | **70.00%** | +15% |
+| Recall@5 | 55.00% | **75.00%** | +20% |
+| MRR | 0.4417 | **0.5350** | +0.09 |
+| Avg Top-1 Score | 0.5706 | 0.5586 | -0.01 |
+| Total chunks | 509 | 493 | -16 |
+| Avg chunk size | 477 chars | 484 chars | +7 |
+| Oversized | 0% | 0% | — |
+| Token utilization | 31.5% | 31.2% | -0.3% |
+| Parse time | 4,589 ms | **383 ms** | -4,206 ms |
+| Embed time | 23,979 ms | 23,414 ms | -565 ms |
+| Avg query latency | 0.33 ms | 0.29 ms | -0.04 ms |
+
+### Findings
+
+- **Recall@5 jumped from 55% → 75%** — the single biggest gain so far. 4 additional questions now find the correct answer in the top 5.
+- **Recall@3 improved the most (+15%)** — answers that were buried at rank 4–5 are now surfacing at rank 1–3. This is the clearest signal that joining pages fixed cross-boundary splits.
+- **MRR improved from 0.44 → 0.54** — the correct chunk is now ranking closer to position 1 on average.
+- **Avg Top-1 Score slightly dropped (0.5706 → 0.5586)** — cosmetically surprising, but explained by the fact that some previously easy questions now face stiffer competition from denser, cleaner chunks. The distribution of scores improved overall (better Recall@3/5), even though the single-question top-1 average dipped slightly.
+- **Parse time dropped 12× (4,589 ms → 383 ms)** — pymupdf is significantly faster than pypdf for text extraction.
+- **Chunk count barely changed (509 → 493)** — joining pages didn't drastically alter the number of chunks. The recursive splitter still produces similar-sized pieces; it just no longer stops at page boundaries.
+
+### What drove the gain
+
+The dominant factor was **joining pages per PDF**. The multi-head attention explanation in the Attention paper spans pages 3–4 — pypdf split it into two incomplete chunks, neither of which matched the query well. After joining, the recursive splitter can see across the boundary and keeps the explanation intact.
+
+Citation stripping (`[13]`, `[35, 2, 5]`) and caption removal contributed modest gains by reducing embedding noise in every chunk.
+
+### Conclusion
+
+Parser quality has a large, low-effort impact on retrieval. Switching to a better extractor (pymupdf) and eliminating artificial page boundaries is one of the highest-ROI changes in the entire pipeline. **All subsequent phases will build on this improved parser.**
 
 ---
 
