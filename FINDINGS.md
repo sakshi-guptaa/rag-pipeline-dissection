@@ -59,7 +59,7 @@ Each phase changes exactly one layer of the pipeline and measures the impact on 
 |-------|--------|-----|-----|-----|-----|-------------|--------|----------|-----------|------------|------------|---------------|
 | 0 — Baseline | No change | 35% | 55% | 55% | 0.4417 | 0.5706 | 509 | 477 chars | 0% | 31.5% | 23,979 ms | 0.33 ms |
 | 1 — Parser | pymupdf + join pages + strip noise | **40%** | **70%** | **75%** | **0.5350** | 0.5586 | 493 | 484 chars | 0% | 31.2% | 23,414 ms | 0.29 ms |
-| 2 — Chunking | character size=1000, winner of 23-combo sweep | **—** | **—** | **90%** | **0.7475** | — | — | — | — | — | — | — |
+| 2 — Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | 65% | 80% | **90%** | **0.7475** | — | 16 ⚠️ | 12,866 chars | 68.8% | 83.7% | 1,392ms | 0.04ms |
 | 3 — Embedding | _TBD_ | | | | | | | | | | | |
 | 4 — Retrieval | _TBD_ | | | | | | | | | | | |
 | 5 — Query | _TBD_ | | | | | | | | | | | |
@@ -163,35 +163,26 @@ Parser quality has a large, low-effort impact on retrieval. Switching to a bette
 
 **Branch:** `phase/2-chunking` | **Tag:** `phase-2-chunking`
 
-**What changed:** Swept all 4 chunkers × 6 chunk sizes (200→1200, overlap=10% of size). Parser from Phase 1 fixed. 23 of 24 combinations run (semantic size=1200 excluded — diminishing returns observed at size=1000 with excessive runtime).
+**What changed:** Swept 3 chunkers (recursive, character, section_wise) × 4 chunk sizes (400, 800, 1000, 1200). Semantic excluded — too slow, not competitive. Overlap = 10% of chunk size. Parser from Phase 1 fixed throughout.
 
 ### Full Sweep Results
 
-| Chunker | Size | Overlap | R@5 | MRR | Winner? |
-|---------|------|---------|-----|-----|---------|
-| recursive | 200 | 20 | 45% | 0.2267 | |
-| recursive | 400 | 40 | 55% | 0.3242 | |
-| recursive | 600 | 60 | 65% | 0.3992 | |
-| recursive | 800 | 80 | 75% | 0.5350 | |
-| recursive | 1000 | 100 | 65% | 0.3558 | |
-| recursive | 1200 | 120 | 80% | 0.4408 | |
-| character | 200 | 20 | 85% | 0.7292 | |
-| character | 400 | 40 | 85% | 0.7542 | |
-| character | 600 | 60 | 85% | 0.7225 | |
-| character | 800 | 80 | 85% | 0.7000 | |
-| **character** | **1000** | **100** | **90%** | **0.7475** | ✅ |
-| character | 1200 | 120 | 85% | 0.7292 | |
-| section_wise | 200 | 20 | 55% | 0.4125 | |
-| section_wise | 400 | 40 | 75% | 0.5308 | |
-| section_wise | 600 | 60 | 70% | 0.5792 | |
-| section_wise | 800 | 80 | 80% | 0.6183 | |
-| section_wise | 1000 | 100 | 85% | 0.6492 | |
-| section_wise | 1200 | 120 | 75% | 0.6875 | |
-| semantic | 200 | 20 | 60% | 0.3083 | |
-| semantic | 400 | 40 | 70% | 0.5792 | |
-| semantic | 600 | 60 | 80% | 0.5350 | |
-| semantic | 800 | 80 | 65% | 0.5500 | |
-| semantic | 1000 | 100 | 75% | 0.6000 | |
+| Chunker | Size | Overlap | R@1 | R@3 | R@5 | MRR | Chunks | Avg Size | Oversized | Token Util | Embed Time |
+|---------|------|---------|-----|-----|-----|-----|--------|----------|-----------|------------|------------|
+| recursive | 400 | 40 | 20% | 40% | 55% | 0.3242 | 937 | 255 chars | 0.0% | 16.7% | 18,086ms |
+| recursive | 800 | 80 | 40% | 70% | 75% | 0.5350 | 493 | 484 chars | 0.0% | 31.2% | 17,014ms |
+| recursive | 1000 | 100 | 20% | 45% | 65% | 0.3558 | 399 | 596 chars | 0.3% | 38.1% | 20,963ms |
+| recursive | 1200 | 120 | 25% | 55% | 80% | 0.4408 | 332 | 709 chars | 3.3% | 45.2% | 17,440ms |
+| character | 400 | 40 | 70% | 80% | 85% | 0.7542 | 17 ⚠️ | 12,082 chars | 64.7% | 78.7% | 1,409ms |
+| character | 800 | 80 | 60% | 75% | 85% | 0.7000 | 17 ⚠️ | 12,103 chars | 64.7% | 79.0% | 1,380ms |
+| **character** | **1000** | **100** | **65%** | **80%** | **90%** | **0.7475** | **16 ⚠️** | **12,866 chars** | **68.8%** | **83.7%** | **1,392ms** |
+| character | 1200 | 120 | 65% | 80% | 85% | 0.7292 | 16 ⚠️ | 12,877 chars | 68.8% | 83.8% | 1,245ms |
+| section_wise | 400 | 40 | 45% | 55% | 75% | 0.5308 | 531 | 421 chars | 0.2% | 27.2% | 19,134ms |
+| section_wise | 800 | 80 | 50% | 75% | 80% | 0.6183 | 273 | 818 chars | 0.4% | 52.4% | 17,816ms |
+| section_wise | 1000 | 100 | 55% | 70% | 85% | 0.6492 | 214 | 1,039 chars | 2.3% | 65.6% | 17,201ms |
+| section_wise | 1200 | 120 | 65% | 70% | 75% | 0.6875 | 174 | 1,271 chars | 13.8% | 78.1% | 16,653ms |
+
+⚠️ = chunk_size parameter is ignored — actual chunks are ~12× larger than specified.
 
 ### Delta from Phase 1
 
@@ -200,24 +191,31 @@ Parser quality has a large, low-effort impact on retrieval. Switching to a bette
 | Recall@5 | 75% | **90%** | +15% |
 | MRR | 0.5350 | **0.7475** | +0.21 |
 
-### Findings
+### The Critical Finding — Character Chunker is Broken (in a useful way)
 
-- **Character chunker dominates** — every character chunk size (200–1200) outperforms the best recursive size (1200=80%). This is the biggest surprise of the sweep.
-- **Character size=1000 wins overall** — R@5=90%, MRR=0.7475. Only 2 of 20 questions miss entirely.
-- **MRR is the most revealing metric here** — character's MRR (0.70–0.75) is consistently ~0.15 higher than any other strategy, meaning the right answer lands at rank 1 far more often.
-- **Recursive shows high variance** — drops from 75% at size=800 to 65% at size=1000, then recovers to 80% at size=1200. Sensitive to whether the paragraph boundary aligns with the chunk boundary.
-- **Section-wise improves monotonically with size** (up to 1000) but never beats character. Preserving section structure helps but individual paragraph boundaries work better for these golden questions.
-- **Semantic is the worst** — high compute cost, inconsistent results, not worth it for this corpus.
+Character produces only **16 chunks** for the entire 4-paper corpus regardless of `chunk_size`. The reason: character splits exclusively on `\n\n`, and in these PDFs the sections between double newlines are enormous (avg 12,866 chars ≈ 3,200 tokens). The `chunk_size` parameter is completely ignored.
 
-### Why character wins (the counter-intuitive result)
+This means 68.8% of character chunks silently exceed the 384-token embedding window. Only the first ~1,500 chars of each chunk are actually embedded — the rest is invisible to retrieval. Yet R@5=90% because with only 16 chunks, the answer almost always appears in the first 1,500 chars of *some* section.
 
-At Phase 0 (pypdf, page-by-page), character was the *worst* chunker — it produced oversized chunks that got silently truncated. Now with the Phase 1 parser (pymupdf + joined pages), character splits on `\n\n` paragraph breaks which in academic papers are **natural topic boundaries**. Each paragraph tends to discuss one idea. Character at size=1000 captures 1–2 complete paragraphs per chunk — enough context without diluting the embedding with off-topic content.
+**This is coarse retrieval that happens to work on a small corpus — not a well-calibrated chunking strategy.**
 
-Recursive tries to be "smarter" by falling back through separators, but that flexibility also makes it less consistent — it sometimes splits in the middle of a paragraph when paragraph size doesn't align with chunk_size.
+### The Production-Safe Winner — Section-wise size=1000
+
+Section_wise at size=1000 gives R@5=85%, MRR=0.6492 with 214 proper chunks, only 2.3% oversized, and sensible section-level granularity. It actually respects `chunk_size` and will scale predictably to larger corpora.
+
+### Other Findings
+
+- **Recursive is the most sensitive** — R@5 swings 55%→80% across sizes. It falls apart at size=400 (too fragmented) and size=1000 (paragraph–boundary misalignment).
+- **Section_wise peaks at size=1000**, then degrades at 1200 (13.8% oversized — embedding truncation starts hurting).
+- **Character embed time is 13× faster** (1,392ms vs ~17,000ms) — only 16 chunks to embed. Speed advantage is an artifact of under-chunking.
 
 ### Conclusion
 
-**character + size=1000 + overlap=100** is the winning configuration. All subsequent phases will use this. Recall@5 is now 90% — only 2 questions out of 20 still miss. The remaining gap requires improving how we match queries to documents (Phase 5) or better ranking of retrieved results (Phase 4).
+**Metric winner:** character size=1000 → R@5=90%, MRR=0.7475 (but effectively doing document-level retrieval with heavy truncation).
+
+**Production pick for remaining phases:** section_wise size=1000 → R@5=85%, MRR=0.6492 (proper chunking, 2.3% oversized, stable at scale).
+
+All subsequent phases will use **section_wise size=1000 overlap=100** as the fixed chunker.
 
 ---
 
