@@ -62,8 +62,8 @@ Each phase changes exactly one layer of the pipeline and measures the impact on 
 | 2 — Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | 65% | 80% | **90%** | **0.7475** | — | 16 ⚠️ | 12,866 chars | 68.8% | 83.7% | 1,392ms | 0.04ms |
 | 3 — Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models plateau at R@5=85%) | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 chars | 1.4% | 49.7% | 13,686ms | 0.08ms |
 | 4 — Retrieval | cross-encoder reranker hurts on academic corpus: R@5 -5%, MRR flat, latency 4000× | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 chars | 1.4% | 49.7% | 13,149ms | 329.95ms |
-| 5 — Query | _TBD_ | | | | | | | | | | | |
-| 6 — Hybrid Search | _TBD_ | | | | | | | | | | |
+| 5 — Hybrid Search | BM25+dense weighted RRF (α=0.7) first method to break R@5=85% ceiling | **60%** | 80% | **90%** | **0.7142** | — | 214 | 1,039 chars | 1.4% | 49.7% | 12,645ms | ~0.6ms |
+| 6 — Query | _TBD_ (HyDE + RAG Fusion, needs OpenAI key) | | | | | | | | | | | |
 
 ---
 
@@ -298,28 +298,44 @@ Every model, regardless of architecture or training objective, achieves exactly 
 
 ---
 
-## Phase 5 — Query Improvement
+## Phase 5 — Hybrid Search (BM25 + Dense + Weighted RRF)
 
-**Branch:** `phase/5-query` | **Tag:** `phase-5-query`
+**Branch:** `phase/5-hybrid` | **Tag:** `phase-5-hybrid`
 
-**What changes:** Query preprocessing before embedding.
-- **HyDE** (Hypothetical Document Embeddings) — LLM generates a fake answer, that answer is embedded instead of the raw question. Closes the question↔document language gap.
-- **RAG Fusion** — generate 3–5 query variants, retrieve for each, merge results with Reciprocal Rank Fusion.
+**What changed:** Search layer — combined BM25 keyword retrieval with BGE dense retrieval using weighted RRF. Swept α=0.5→0.8 to find the optimal dense/BM25 balance.
 
-_Requires `OPENAI_API_KEY`. Results to be recorded after implementation._
+### Alpha Sweep Results
+
+| Metric | Dense (Ph3) | BM25-only | α=0.5 | α=0.6 | **α=0.7** | α=0.8 |
+|--------|------------|-----------|-------|-------|-----------|-------|
+| Recall@1 | 60% | 65% | 55% | 55% | **60%** | **60%** |
+| Recall@3 | 80% | 75% | **85%** | **85%** | 80% | 80% |
+| Recall@5 | 85% | 85% | **90%** | **90%** | **90%** | **90%** |
+| MRR | 0.6933 | 0.7167 | 0.7125 | 0.7042 | **0.7142** | 0.7142 |
+
+### Findings
+
+- **α=0.7 is the sweet spot** — R@5=90% (breaks the 85% ceiling), R@1 stays at 60%, MRR +0.02 vs dense-only
+- **First method to exceed R@5=85%** across all phases — the 3rd missing question was keyword-matchable; BM25 found it, dense couldn't
+- **BM25-only MRR=0.7167 beats dense-only** — academic papers use precise terminology; exact term matching is stronger than expected
+- **α=0.5 gets R@3=85%** but drops R@1 to 55% — BM25 overrides dense at rank 1, occasionally promoting wrong chunks
+- **α=0.7 keeps dense in control of top slots** while BM25's 30% weight surfaces keyword-matchable answers in positions 4–5
+
+### Conclusion
+
+**Winner: Hybrid RRF with α=0.7** — R@5=90%, MRR=0.7142, latency ~0.6ms. BM25 and dense have complementary failure modes: dense fails on exact-term questions, BM25 fails on paraphrases. RRF captures both signals.
 
 ---
 
-## Phase 6 — Hybrid Search
+## Phase 6 — Query Improvement (HyDE + RAG Fusion)
 
-**Branch:** `phase/6-hybrid` | **Tag:** `phase-6-hybrid`
+**Branch:** `phase/6-query` | **Tag:** `phase-6-query`
 
-**What changes:** Combine BM25 keyword search with dense vector search.
-- BM25 excels at exact term matching (`"multi-head attention"` → exact hit)
-- Dense search excels at semantic similarity
-- Merge both ranked lists using Reciprocal Rank Fusion (RRF)
+**What changes:** Query preprocessing before embedding.
+- **HyDE** — LLM generates a fake answer, that answer is embedded instead of the raw question. Closes the question↔document language gap.
+- **RAG Fusion** — generate 3–5 query variants, retrieve for each, merge with RRF.
 
-_Results to be recorded after BM25 + RRF integration._
+_Requires `OPENAI_API_KEY`. Results to be recorded after implementation._
 
 ---
 
