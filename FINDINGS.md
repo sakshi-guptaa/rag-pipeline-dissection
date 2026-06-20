@@ -61,7 +61,7 @@ Each phase changes exactly one layer of the pipeline and measures the impact on 
 | 1 — Parser | pymupdf + join pages + strip noise | **40%** | **70%** | **75%** | **0.5350** | 0.5586 | 493 | 484 chars | 0% | 31.2% | 23,414 ms | 0.29 ms |
 | 2 — Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | 65% | 80% | **90%** | **0.7475** | — | 16 ⚠️ | 12,866 chars | 68.8% | 83.7% | 1,392ms | 0.04ms |
 | 3 — Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models plateau at R@5=85%) | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 chars | 1.4% | 49.7% | 13,686ms | 0.08ms |
-| 4 — Retrieval | _TBD_ | | | | | | | | | | | |
+| 4 — Retrieval | cross-encoder reranker hurts on academic corpus: R@5 -5%, MRR flat, latency 4000× | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 chars | 1.4% | 49.7% | 13,149ms | 329.95ms |
 | 5 — Query | _TBD_ | | | | | | | | | | | |
 | 6 — Hybrid Search | _TBD_ | | | | | | | | | | |
 
@@ -267,16 +267,34 @@ Every model, regardless of architecture or training objective, achieves exactly 
 
 ---
 
-## Phase 4 — Retrieval + Reranking
+## Phase 4 — Retrieval + Cross-Encoder Reranker
 
 **Branch:** `phase/4-retrieval` | **Tag:** `phase-4-retrieval`
 
-**What changes:** Add a cross-encoder reranker after initial bi-encoder retrieval.
-- Stage 1: retrieve top-20 candidates with bi-encoder (fast, approximate)
-- Stage 2: rerank all 20 with `cross-encoder/ms-marco-MiniLM-L-6-v2` (slower, precise)
-- Return top-5 from reranked list
+**What changed:** Two-stage retrieval. Stage 1: BGE bi-encoder retrieves top-20. Stage 2: `cross-encoder/ms-marco-MiniLM-L-6-v2` reranks all 20 → returns top-5.
 
-_Results to be recorded after reranker integration._
+### Results
+
+| Metric | Phase 3 (no reranker) | Phase 4 (+ reranker) | Delta |
+|--------|----------------------|----------------------|-------|
+| Recall@1 | 60% | 60% | 0% |
+| Recall@3 | 80% | 80% | 0% |
+| Recall@5 | **85%** | **80%** | **-5%** |
+| MRR | 0.6933 | 0.6917 | -0.0016 |
+| Avg Top-1 Score | 0.7036 | 0.6742 | -0.029 |
+| Bi-encoder latency | 0.08ms | 0.24ms | — |
+| Reranker latency | — | ~330ms | — |
+| **Total query latency** | **0.08ms** | **~330ms** | **~4000×** |
+
+### Why the Reranker Hurt
+
+- **Domain mismatch** — `ms-marco-MiniLM-L-6-v2` was trained on web search snippets. Our corpus is academic papers with long-form technical prose. The cross-encoder's relevance intuitions don't transfer.
+- **R@5 regression** — the bi-encoder had the correct answer in its top-20 for 85% of questions. The cross-encoder then pushed one of those answers past position 5. The reranker's mistakes outnumbered its corrections.
+- **BGE is already a strong bi-encoder** — asymmetric query prefix + retrieval-optimised training left little room for a reranker to improve, and significant room to cause damage.
+
+### Conclusion
+
+**Reranker dropped.** Degrades recall and adds 330ms per query at no quality gain. Domain-fit failure, not a problem with reranking as a technique. A reranker fine-tuned on scientific text would be needed to benefit this corpus. All subsequent phases continue without reranker.
 
 ---
 
