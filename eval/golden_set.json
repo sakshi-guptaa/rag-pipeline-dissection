@@ -36,7 +36,7 @@
   },
   {
     "question": "How does multi-head attention work?",
-    "evidence": "different representation subspaces",
+    "evidence": "representation\nsubspaces",
     "paper": "attention"
   },
   {
@@ -96,7 +96,7 @@
   },
   {
     "question": "What does RAGAS measure about whether retrieved context is relevant?",
-    "evidence": "context relevancy",
+    "evidence": "context relevance",
     "paper": "ragas"
   }
 ]
