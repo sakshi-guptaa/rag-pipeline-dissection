@@ -58,7 +58,15 @@ Systematic, one-layer-at-a-time audit of what actually moves the needle in RAG r
 
 **Why:** Chunk size affects both what fits in an embedding and how much context surrounds each answer.
 
-**Key results (section_wise, the production pick):**
+**Best result per chunker (across all sizes swept):**
+
+| Chunker | Best size | R@1 | R@5 | MRR | Chunks | Oversized | Note |
+|---------|-----------|-----|-----|-----|--------|-----------|------|
+| recursive | 1200 | 25% | 80% | 0.44 | 332 | 3.3% | Sensitive to size — R@5 swings 55%→80% across the sweep |
+| character | 1000 | 65% | **90%** | **0.75** | 16 ⚠️ | 68.8% | chunk_size ignored; splits on `\n\n` only |
+| **section_wise** | **1000** | **55%** | **85%** | **0.65** | **214** | **2.3%** | Production pick |
+
+**All sizes for reference (section_wise):**
 
 | Size | R@5 | MRR | Chunks | Oversized |
 |------|-----|-----|--------|-----------|
@@ -67,7 +75,7 @@ Systematic, one-layer-at-a-time audit of what actually moves the needle in RAG r
 | **1000** | **85%** | **0.65** | **214** | **2.3%** |
 | 1200 | 75% | 0.69 | 174 | 13.8% |
 
-**Hidden trap — character chunker:** The character chunker *appeared* to win (R@5=90%) but produced only 16 chunks averaging 12,866 chars — 68% of content silently truncated by the 384-token embedding limit. Good metrics on a small corpus, would collapse at scale.
+**Why character chunker's win doesn't count:** It produced only 16 chunks averaging 12,866 chars — the `chunk_size` parameter is completely ignored because it splits exclusively on `\n\n`. 68% of each chunk's content is silently truncated by the 384-token embedding window. R@5=90% because with just 16 giant chunks, the answer almost always appears in the first 1,500 chars of some section. At scale this breaks down entirely.
 
 **Takeaway:** section_wise size=1000 is the production pick — sensible granularity, 2.3% oversized, stable at scale. **All subsequent phases use this chunker.**
 
