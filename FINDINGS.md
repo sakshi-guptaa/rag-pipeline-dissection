@@ -12,6 +12,7 @@ Baseline: Recursive chunker | chunk_size=800 | overlap=80 | FAISS
 | 1-Parser | pymupdf + join pages + strip captions & citations | recursive | 800 | 80 | faiss | 40.00% | 70.00% | 75.00% | 0.5350 | 0.5586 | 493 | 484 | 0.0% | 31.2% | 23414ms | 0.29ms |
 | 2-Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | character | 1000 | 100 | faiss | 65% | 80% | **90%** | **0.7475** | — | 16 | 12,866 | 68.8% | 83.7% | 1,392ms | 0.04ms |
 | 3-Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models tie at R@5=85%) | section_wise | 1000 | 100 | faiss | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 | 1.4% | 49.7% | 13,686ms | 0.08ms |
+| 4-Retrieval | cross-encoder reranker hurts: R@5 55%→80%, MRR flat, latency 4000× worse | section_wise | 1000 | 100 | faiss | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 | 1.4% | 49.7% | 13,149ms | 329.95ms |
 
 ## Phase 2 — Chunking Sweep Results
 
@@ -84,3 +85,45 @@ Every model, regardless of architecture or training objective, achieves exactly 
 **Winner: BGE-base-en-v1.5** — best MRR (0.6933), best Top-1 cosine similarity (0.7036), fastest embed time (13,686ms), and lowest query latency (0.08ms).
 
 **Key insight: embedding model choice affects ranking quality (MRR, Top-1 score) but not retrieval coverage (Recall@5) on this corpus.** The 3 missing questions require a different approach entirely. All subsequent phases will use **BGE-base-en-v1.5**.
+
+
+## Phase 4 — Retrieval + Cross-Encoder Reranker
+
+**Branch:** `phase/4-retrieval` | **Tag:** `phase-4-retrieval`
+
+**What changed:** Retrieval only — added a two-stage pipeline. Stage 1: BGE bi-encoder retrieves top-20. Stage 2: `cross-encoder/ms-marco-MiniLM-L-6-v2` reranks all 20 → returns top-5. Everything else fixed (section_wise size=1000, BGE embeddings, FAISS).
+
+### Results
+
+| Metric | Phase 3 (no reranker) | Phase 4 (+ reranker) | Delta |
+|--------|----------------------|----------------------|-------|
+| Recall@1 | 60% | 60% | 0% |
+| Recall@3 | 80% | 80% | 0% |
+| Recall@5 | **85%** | **80%** | **-5%** |
+| MRR | 0.6933 | 0.6917 | -0.0016 |
+| Avg Top-1 Score | 0.7036 | 0.6742 | -0.029 |
+| Bi-encoder latency | 0.08ms | 0.24ms | +0.16ms |
+| Reranker latency | — | ~330ms | — |
+| **Total query latency** | **0.08ms** | **~330ms** | **~4000×** |
+
+### The Unexpected Result — Reranker Hurts
+
+The cross-encoder **degraded every metric** — R@5 dropped 5 points, MRR barely moved, and Top-1 cosine similarity fell. At the same time, query latency increased 4,000×.
+
+### Why the Reranker Hurt Here
+
+**1. Domain mismatch.** `ms-marco-MiniLM-L-6-v2` was trained on MS MARCO — web search snippets (short, factual, consumer queries). Our corpus is academic papers with long-form technical prose. The cross-encoder's relevance intuitions were trained on a completely different distribution.
+
+**2. R@5 regression = the reranker promoted wrong chunks.** The bi-encoder already had the right answer in its top-20 for 85% of questions. The cross-encoder then re-ranked one of those 20 into position 6+ for one additional question, while the bi-encoder had it in top-5. The reranker's mistakes outweighed its corrections on this domain.
+
+**3. Small corpus amplifies reranker errors.** With only 214 chunks, the bi-encoder top-20 is a large fraction of the index (≈9%). The candidates passed to the cross-encoder contain many plausible-looking but wrong chunks, and the cross-encoder — trained on web data — cannot reliably distinguish them from the correct academic prose.
+
+**4. BGE is already a strong bi-encoder.** BGE was fine-tuned for retrieval on diverse corpora and uses an asymmetric query prefix. The reranker's marginal ranking improvement was insufficient to offset its domain-gap errors.
+
+### Conclusion
+
+**No reranker for this corpus and pipeline.** The cross-encoder degraded recall and added 330ms of latency per query. This is a domain-fit failure, not a problem with reranking as a technique.
+
+**Key insight: a cross-encoder trained on web search does not generalise to academic papers.** In production, you'd need a reranker fine-tuned on scientific text (e.g., `cross-encoder/ms-marco-electra-base` for general, or a domain-specific model). On a small corpus where the bi-encoder already performs well, reranking has little headroom to gain and meaningful risk of hurting.
+
+**Phase 4 is dropped from the best pipeline.** Continuing with BGE bi-encoder top-5, no reranker.
