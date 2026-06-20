@@ -142,10 +142,15 @@ def save_to_findings(results):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--save", action="store_true")
+    parser.add_argument("--chunkers", nargs="+", choices=list(CHUNKERS.keys()), default=list(CHUNKERS.keys()))
+    parser.add_argument("--sizes", nargs="+", type=int, default=CHUNK_SIZES)
     args = parser.parse_args()
 
     with open(GOLDEN_PATH) as f:
         golden = json.load(f)
+
+    active_chunkers = {k: v for k, v in CHUNKERS.items() if k in args.chunkers}
+    active_sizes = args.sizes
 
     print("Loading pages and model (once)...")
     pages = load_all_pdfs(PAPERS_DIR)
@@ -153,18 +158,18 @@ def main():
     print(f"  {len(pages)} documents loaded\n")
 
     results = []
-    total = len(CHUNKERS) * len(CHUNK_SIZES)
+    total = len(active_chunkers) * len(active_sizes)
     done = 0
 
-    for chunker_name, chunker_fn in CHUNKERS.items():
-        for chunk_size in CHUNK_SIZES:
+    for chunker_name, chunker_fn in active_chunkers.items():
+        for chunk_size in active_sizes:
             done += 1
             print(f"[{done:>2}/{total}] {chunker_name} size={chunk_size}...", end=" ", flush=True)
             try:
                 r = evaluate_combo(chunker_name, chunker_fn, chunk_size, pages, golden, tokenizer)
                 if r:
                     results.append(r)
-                    print(f"R@5={r['recall_at_5']:.0%}  MRR={r['mrr']:.4f}")
+                    print(f"R@5={r['recall_at_5']:.0%}  MRR={r['mrr']:.4f}  chunks={r['count']}")
                 else:
                     print("skipped (0 chunks)")
             except Exception as e:
