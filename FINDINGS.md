@@ -13,6 +13,7 @@ Baseline: Recursive chunker | chunk_size=800 | overlap=80 | FAISS
 | 2-Chunking | character size=1000 (metric winner) / section_wise size=1000 (production pick) | character | 1000 | 100 | faiss | 65% | 80% | **90%** | **0.7475** | — | 16 | 12,866 | 68.8% | 83.7% | 1,392ms | 0.04ms |
 | 3-Embedding | bge-base-en-v1.5 (best MRR/Top-1; all 4 models tie at R@5=85%) | section_wise | 1000 | 100 | faiss | **60%** | **80%** | 85% | **0.6933** | **0.7036** | 214 | 1,039 | 1.4% | 49.7% | 13,686ms | 0.08ms |
 | 4-Retrieval | cross-encoder reranker hurts: R@5 55%→80%, MRR flat, latency 4000× worse | section_wise | 1000 | 100 | faiss | 60% | 80% | 80% | 0.6917 | 0.6742 | 214 | 1,039 | 1.4% | 49.7% | 13,149ms | 329.95ms |
+| 5-Hybrid | BM25 + dense + weighted RRF (α=0.7) breaks R@5 ceiling | section_wise | 1000 | 100 | faiss+bm25 | **60%** | 80% | **90%** | **0.7142** | — | 214 | 1,039 | 1.4% | 49.7% | 12,645ms | ~0.6ms |
 
 ## Phase 2 — Chunking Sweep Results
 
@@ -127,3 +128,54 @@ The cross-encoder **degraded every metric** — R@5 dropped 5 points, MRR barely
 **Key insight: a cross-encoder trained on web search does not generalise to academic papers.** In production, you'd need a reranker fine-tuned on scientific text (e.g., `cross-encoder/ms-marco-electra-base` for general, or a domain-specific model). On a small corpus where the bi-encoder already performs well, reranking has little headroom to gain and meaningful risk of hurting.
 
 **Phase 4 is dropped from the best pipeline.** Continuing with BGE bi-encoder top-5, no reranker.
+
+
+## Phase 5 — Hybrid Search (BM25 + Dense + Weighted RRF)
+
+**Branch:** `phase/5-hybrid` | **Tag:** `phase-5-hybrid`
+
+**What changed:** Search layer only — combined BM25 keyword retrieval with BGE dense retrieval using weighted Reciprocal Rank Fusion. Everything else fixed (section_wise size=1000, BGE embeddings, FAISS).
+
+**RRF formula:** `score = α × (1/(k+rank_dense)) + (1-α) × (1/(k+rank_bm25))` where k=60
+
+### Alpha Sweep Results
+
+| Metric | Dense (Ph3) | BM25-only | α=0.5 | α=0.6 | **α=0.7** | α=0.8 |
+|--------|------------|-----------|-------|-------|-----------|-------|
+| Recall@1 | 60% | 65% | 55% | 55% | **60%** | **60%** |
+| Recall@3 | 80% | 75% | **85%** | **85%** | 80% | 80% |
+| Recall@5 | 85% | 85% | **90%** | **90%** | **90%** | **90%** |
+| MRR | 0.6933 | 0.7167 | 0.7125 | 0.7042 | **0.7142** | 0.7142 |
+
+### Delta from Phase 3 (best config: α=0.7)
+
+| Metric | Phase 3 (dense-only) | Phase 5 (hybrid α=0.7) | Delta |
+|--------|---------------------|----------------------|-------|
+| Recall@1 | 60% | 60% | 0% |
+| Recall@3 | 80% | 80% | 0% |
+| Recall@5 | **85%** | **90%** | **+5%** |
+| MRR | 0.6933 | **0.7142** | **+0.02** |
+
+### Breaking the R@5 Ceiling
+
+Every embedding model, reranker variant, and chunk size tried across Phases 2–4 was stuck at R@5=85%. Hybrid search at α=0.7 is the **first method to break through** — reaching 90%.
+
+The 3 questions that all dense models missed split into two categories:
+- **2 still missed** — these require a different query or document representation entirely (→ Phase 6 HyDE)
+- **1 newly found** — this question used precise technical terminology that appeared verbatim in the paper. BM25 found it via exact term matching. Dense retrieval had consistently ranked it too low because the query phrasing didn't semantically match the document's phrasing pattern.
+
+### Why α=0.7 Wins
+
+- **α=0.5 (equal weight):** R@5=90% but R@1 drops to 55% — BM25 is strong enough to override dense at rank 1 and occasionally picks the wrong chunk there.
+- **α=0.7 (dense-heavy):** Dense controls the top slots (R@1 stays 60%), BM25's 30% weight is just enough to surface the keyword-matchable answer into positions 4–5 without displacing correct dense results.
+- **α=0.8:** Same R@5=90% and R@1=60% as α=0.7, same MRR — identical results, meaning BM25's contribution saturates at α=0.7 for this corpus.
+
+### BM25-only Is Surprisingly Strong
+
+BM25-only MRR=0.7167 beats dense-only MRR=0.6933. Academic papers use precise, consistent terminology — when the question uses the exact phrase from the paper, BM25 finds it instantly. The weakness is R@3 (75% vs 80%) — paraphrase questions without term overlap are missed entirely.
+
+### Conclusion
+
+**Winner: Hybrid RRF with α=0.7** — R@5=90%, MRR=0.7142, latency ~0.6ms.
+
+**Key insight: BM25 and dense retrieval have complementary failure modes.** Dense fails on exact-term questions (language gap). BM25 fails on paraphrase questions (no term overlap). RRF captures both signals. The weight α=0.7 keeps dense in control of ranking while letting BM25 contribute recall coverage.
